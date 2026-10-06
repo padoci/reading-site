@@ -3,8 +3,8 @@
 A static website that shows text back to you one word at a time (rapid serial visual presentation), with the pivot letter of each word highlighted and aligned so your eyes never move.
 
 **Input:** paste text, upload `.txt` / `.md` / `.pdf` / `.epub` / `.docx`, or enter a web address.
-**Reader:** adjustable WPM (100–1000), smart pauses on punctuation and long words, play/pause, ±10-word skip, scrub bar, restart, text size, light/dark theme.
-**Keys:** `Space` play/pause · `←`/`→` ±10 words (`Shift` ±1) · `↑`/`↓` speed · `Home` restart · `Esc` exit.
+**Reader:** speed slider (100–1000 WPM, fine 10-WPM steps across 250–500), smart pauses on punctuation and long words, play/pause, ±10-word skip, scrub bar, restart, full-screen focus mode, text size, light / dark grey / black themes and a custom accent colour.
+**Keys:** `Space` play/pause · `←`/`→` ±10 words (`Shift` ±1) · `↑`/`↓` speed · `F` focus mode · `Home` restart · `Esc` exit focus / reader.
 
 Text, reading position and settings are stored only in your browser's `localStorage`.
 
