@@ -1,11 +1,21 @@
 <!doctype html>
-<html lang="en" data-theme="auto">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Flash Reader – speed read anything</title>
   <meta name="description" content="Paste text, upload a file, or enter a web address and read it one word at a time with rapid serial visual presentation (RSVP).">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111'/%3E%3Ctext x='16' y='23' font-size='20' font-family='Georgia,serif' text-anchor='middle' fill='%23fff'%3EF%3C/text%3E%3C/svg%3E">
+  <script>
+    // Apply the saved theme/accent before first paint to avoid a flash.
+    try {
+      var s = JSON.parse(localStorage.getItem('flashreader.settings')) || {}, d = document.documentElement;
+      var t = s.theme === 'dark' ? 'grey' : s.theme;
+      if (t !== 'light' && t !== 'grey' && t !== 'black') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'grey' : 'light';
+      d.dataset.theme = t;
+      if (/^#[0-9a-f]{6}$/i.test(s.accent)) d.style.setProperty('--accent', s.accent);
+    } catch (e) {}
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -16,10 +26,7 @@
 
   <main>
     <!-- ============ Input view ============ -->
-    <section id="inputView" aria-labelledby="inputHeading">
-      <h2 id="inputHeading">Read anything, one word at a time.</h2>
-      <p class="lede">Add some text and it will flash back to you word by word, with your eyes fixed on a single point. Everything stays in your browser.</p>
-
+    <section id="inputView" aria-label="Choose text to read">
       <div id="resumeCard" class="card resume" hidden>
         <div>
           <strong id="resumeTitle"></strong>
@@ -33,25 +40,25 @@
 
       <div class="card">
         <div class="tabs" role="tablist" aria-label="Input method">
-          <button type="button" role="tab" id="tab-paste" aria-controls="panel-paste" aria-selected="true">Paste text</button>
-          <button type="button" role="tab" id="tab-file" aria-controls="panel-file" aria-selected="false" tabindex="-1">Upload file</button>
+          <button type="button" role="tab" id="tab-paste" aria-controls="panel-paste" aria-selected="true">Paste</button>
+          <button type="button" role="tab" id="tab-file" aria-controls="panel-file" aria-selected="false" tabindex="-1">File</button>
           <button type="button" role="tab" id="tab-url" aria-controls="panel-url" aria-selected="false" tabindex="-1">Web page</button>
         </div>
 
         <div role="tabpanel" id="panel-paste" aria-labelledby="tab-paste">
           <label for="pasteText" class="sr-only">Text to read</label>
-          <textarea id="pasteText" rows="9" placeholder="Paste or type text here…" spellcheck="false"></textarea>
+          <textarea id="pasteText" rows="9" placeholder="Paste text…" spellcheck="false"></textarea>
           <div class="row end">
             <span id="pasteCount" class="muted"></span>
-            <button type="button" id="pasteBtn" class="btn primary">Start reading</button>
+            <button type="button" id="pasteBtn" class="btn primary">Read</button>
           </div>
         </div>
 
         <div role="tabpanel" id="panel-file" aria-labelledby="tab-file" hidden>
           <label class="drop" id="drop" for="fileInput">
             <input type="file" id="fileInput" accept=".txt,.md,.markdown,.pdf,.epub,.docx,text/plain,application/pdf">
-            <span class="drop-title">Drop a file here or <u>browse</u></span>
-            <span class="muted">.txt &middot; .md &middot; .pdf &middot; .epub &middot; .docx</span>
+            <span class="drop-title">Drop a file or <u>browse</u></span>
+            <span class="muted small">txt · md · pdf · epub · docx</span>
           </label>
         </div>
 
@@ -59,9 +66,9 @@
           <form id="urlForm" class="row" novalidate>
             <label for="urlInput" class="sr-only">Web address</label>
             <input type="text" id="urlInput" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="https://example.com/article">
-            <button type="submit" id="urlBtn" class="btn primary">Fetch &amp; read</button>
+            <button type="submit" id="urlBtn" class="btn primary">Read</button>
           </form>
-          <p class="muted small">We try to load the page directly. Sites that block that are fetched through the <a href="https://jina.ai/reader/" target="_blank" rel="noopener">r.jina.ai</a> reader service, which will see the address you enter.</p>
+          <p class="muted small">Pages that block direct access are fetched via <a href="https://jina.ai/reader/" target="_blank" rel="noopener">r.jina.ai</a>.</p>
         </div>
 
         <p id="status" class="status" role="status" aria-live="polite"></p>
@@ -75,13 +82,24 @@
         <span id="counter" class="muted"></span>
       </div>
 
-      <div id="stage" class="stage" role="button" tabindex="0" aria-label="Reading area. Press space to play or pause.">
+      <div id="stage" class="stage" tabindex="0" aria-label="Reading area">
+        <button type="button" id="focusBtn" class="focus-btn" title="Focus mode (F)" aria-label="Enter focus mode">
+          <svg class="i-expand" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+          <svg class="i-collapse" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+        </button>
         <div class="word" id="word" aria-live="off"><span class="l"></span><span class="p"></span><span class="r"></span></div>
         <div class="stage-note" id="stageNote"></div>
+
+        <div class="focus-bar">
+          <button type="button" class="btn icon" id="fDown" aria-label="Slower">&minus;</button>
+          <span id="fWpm" class="focus-wpm">300 WPM</span>
+          <button type="button" class="btn icon" id="fUp" aria-label="Faster">+</button>
+        </div>
+        <div class="focus-progress"><i id="fProg"></i></div>
       </div>
 
       <label for="scrub" class="sr-only">Position in text</label>
-      <input type="range" id="scrub" min="0" max="0" value="0" step="1">
+      <input type="range" class="rng" id="scrub" min="0" max="0" value="0" step="1">
       <div class="meta small muted">
         <span id="pct">0%</span>
         <span id="eta"></span>
@@ -90,43 +108,45 @@
       <div class="controls">
         <button type="button" class="btn icon" id="restartBtn" title="Restart (Home)" aria-label="Restart">&#x23EE;</button>
         <button type="button" class="btn icon" id="backBtn" title="Back 10 words (←)" aria-label="Back 10 words">&#x21BA; 10</button>
-        <button type="button" class="btn primary play" id="playBtn" aria-label="Play">Play</button>
+        <button type="button" class="btn primary play" id="playBtn" title="Play / pause (Space)" aria-label="Play">Play</button>
         <button type="button" class="btn icon" id="fwdBtn" title="Forward 10 words (→)" aria-label="Forward 10 words">10 &#x21BB;</button>
       </div>
 
-      <div class="sliders">
-        <label class="slider">
-          <span>Speed <output id="wpmOut">300</output> WPM</span>
-          <input type="range" id="wpm" min="100" max="1000" step="10" value="300">
-        </label>
+      <div class="speed">
+        <div class="speed-head">
+          <button type="button" class="btn icon step" id="wpmDown" title="Slower (↓)" aria-label="Slower">&minus;</button>
+          <div class="speed-val"><output id="wpmOut" for="wpm">300</output><span>WPM</span></div>
+          <button type="button" class="btn icon step" id="wpmUp" title="Faster (↑)" aria-label="Faster">+</button>
+        </div>
+        <input type="range" class="rng" id="wpm" min="0" max="38" step="1" value="0" aria-label="Words per minute">
+        <div class="ticks" id="wpmTicks" aria-hidden="true"></div>
       </div>
 
       <details class="settings">
         <summary>Display settings</summary>
         <div class="settings-grid">
+          <div class="field">
+            <span id="themeLabel">Theme</span>
+            <div class="seg" id="themeSeg" role="radiogroup" aria-labelledby="themeLabel">
+              <button type="button" role="radio" data-theme="light">Light</button>
+              <button type="button" role="radio" data-theme="grey">Dark grey</button>
+              <button type="button" role="radio" data-theme="black">Black</button>
+            </div>
+          </div>
+          <div class="field">
+            <span id="accentLabel">Accent</span>
+            <div class="swatches" id="accentSwatches" role="radiogroup" aria-labelledby="accentLabel"></div>
+          </div>
           <label class="slider">
             <span>Text size <output id="sizeOut">56</output> px</span>
-            <input type="range" id="size" min="28" max="120" step="2" value="56">
-          </label>
-          <label class="field">
-            <span>Theme</span>
-            <select id="theme">
-              <option value="auto">Match system</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
+            <input type="range" class="rng" id="size" min="28" max="120" step="2" value="56">
           </label>
           <label class="check">
             <input type="checkbox" id="smart" checked>
-            <span>Smart pauses <span class="muted">(linger on punctuation and long words)</span></span>
+            <span>Smart pauses</span>
           </label>
         </div>
       </details>
-
-      <p class="hint muted small">
-        <kbd>Space</kbd> play/pause &middot; <kbd>←</kbd><kbd>→</kbd> ±10 words (<kbd>Shift</kbd> ±1) &middot;
-        <kbd>↑</kbd><kbd>↓</kbd> speed &middot; <kbd>Home</kbd> restart &middot; <kbd>Esc</kbd> exit
-      </p>
     </section>
   </main>
 

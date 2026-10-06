@@ -1,10 +1,24 @@
-/* UI wiring, persistence (localStorage), and keyboard controls. */
+/* UI wiring, persistence (localStorage), focus mode, and keyboard controls. */
 (function () {
   'use strict';
 
   const $ = (id) => document.getElementById(id);
   const KEYS = { doc: 'flashreader.doc', pos: 'flashreader.pos', settings: 'flashreader.settings' };
-  const DEFAULTS = { wpm: 300, size: 56, theme: 'auto', smart: true };
+
+  // Selectable speeds: fine 10-WPM steps through the common 250-500 range, coarser at the ends.
+  const WPMS = [];
+  for (let w = 100; w < 250; w += 25) WPMS.push(w);
+  for (let w = 250; w <= 500; w += 10) WPMS.push(w);
+  for (const w of [550, 600, 650, 700, 800, 900, 1000]) WPMS.push(w);
+  const wpmIndex = (wpm) => {
+    let best = 0;
+    WPMS.forEach((w, i) => { if (Math.abs(w - wpm) < Math.abs(WPMS[best] - wpm)) best = i; });
+    return best;
+  };
+
+  const THEMES = ['light', 'grey', 'black'];
+  const ACCENTS = ['#e5392f', '#f08c00', '#2f9e44', '#12a4a4', '#2f6fed', '#8250df', '#e83e8c'];
+  const DEFAULTS = { wpm: 300, size: 56, theme: null, accent: ACCENTS[0], smart: true };
 
   // ---- storage (always guarded: it can be unavailable or full) ----
   const store = {
@@ -20,6 +34,11 @@
   };
 
   const settings = Object.assign({}, DEFAULTS, store.get(KEYS.settings));
+  if (settings.theme === 'dark') settings.theme = 'grey'; // from the earlier two-theme version
+  if (!THEMES.includes(settings.theme)) {
+    settings.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'grey' : 'light';
+  }
+  if (!/^#[0-9a-f]{6}$/i.test(settings.accent)) settings.accent = DEFAULTS.accent;
   let doc = null; // { id, title, text }
 
   // ---- elements ----
@@ -28,7 +47,7 @@
     word: $('word'), stage: $('stage'), note: $('stageNote'), scrub: $('scrub'),
     counter: $('counter'), pct: $('pct'), eta: $('eta'), title: $('docTitle'),
     play: $('playBtn'), wpm: $('wpm'), wpmOut: $('wpmOut'), size: $('size'), sizeOut: $('sizeOut'),
-    theme: $('theme'), smart: $('smart'),
+    smart: $('smart'), focusBtn: $('focusBtn'), fWpm: $('fWpm'), fProg: $('fProg'),
   };
   const wordParts = { l: el.word.querySelector('.l'), p: el.word.querySelector('.p'), r: el.word.querySelector('.r') };
 
@@ -47,11 +66,12 @@
     onState(playing) {
       el.play.textContent = playing ? 'Pause' : 'Play';
       el.play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
-      el.note.textContent = playing ? '' : reader.atEnd && reader.length > 1 ? 'End of text' : 'Paused — tap or press Space';
+      el.note.textContent = playing ? '' : reader.atEnd && reader.length > 1 ? 'End of text' : '';
+      if (focus) pokeFocusUi();
       if (!playing) savePosition();
     },
     onEnd() {
-      el.note.textContent = 'End of text — press Play to read again';
+      el.note.textContent = 'End of text';
       savePosition();
     },
   });
@@ -64,9 +84,12 @@
 
   function updateStats() {
     const n = reader.length;
-    el.counter.textContent = n ? (reader.index + 1).toLocaleString() + ' / ' + n.toLocaleString() + ' words' : '';
-    el.pct.textContent = n > 1 ? Math.round((reader.index / (n - 1)) * 100) + '%' : '100%';
+    const frac = n > 1 ? reader.index / (n - 1) : 1;
+    el.counter.textContent = n ? (reader.index + 1).toLocaleString() + ' / ' + n.toLocaleString() : '';
+    el.pct.textContent = Math.round(frac * 100) + '%';
     el.eta.textContent = reader.atEnd ? '' : '~' + fmtTime(reader.secondsLeft());
+    el.scrub.style.setProperty('--f', frac);
+    el.fProg.style.width = frac * 100 + '%';
   }
 
   function savePosition() {
@@ -75,16 +98,88 @@
     store.set(KEYS.pos, { id: doc.id, index: reader.index });
   }
 
+  // ---- speed slider ticks ----
+  (function buildTicks() {
+    const ticks = $('wpmTicks');
+    [100, 250, 300, 400, 500, 1000].forEach((w) => {
+      const s = document.createElement('span');
+      s.textContent = w;
+      s.style.setProperty('--p', wpmIndex(w) / (WPMS.length - 1));
+      ticks.appendChild(s);
+    });
+    el.wpm.max = WPMS.length - 1;
+  })();
+
+  // ---- theme & accent controls ----
+  const themeBtns = Array.from(document.querySelectorAll('#themeSeg button'));
+  themeBtns.forEach((b) => b.addEventListener('click', () => changeSetting('theme', b.dataset.theme)));
+
+  const swatchBox = $('accentSwatches');
+  const swatchBtns = ACCENTS.map((c) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'swatch';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-label', 'Accent ' + c);
+    b.dataset.color = c;
+    b.style.setProperty('--c', c);
+    b.addEventListener('click', () => changeSetting('accent', c));
+    swatchBox.appendChild(b);
+    return b;
+  });
+  const customWrap = document.createElement('span');
+  customWrap.className = 'swatch custom';
+  customWrap.setAttribute('role', 'radio');
+  customWrap.title = 'Custom colour';
+  const customInput = document.createElement('input');
+  customInput.type = 'color';
+  customInput.setAttribute('aria-label', 'Custom accent colour');
+  customInput.addEventListener('input', () => changeSetting('accent', customInput.value));
+  customWrap.appendChild(customInput);
+  swatchBox.appendChild(customWrap);
+
+  function inkFor(hex) {
+    const [r, g, b] = [1, 3, 5].map((i) => {
+      const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.3 ? '#111111' : '#ffffff';
+  }
+
   // ---- settings ----
   function applySettings() {
-    document.documentElement.dataset.theme = settings.theme;
-    document.documentElement.style.setProperty('--fs', settings.size + 'px');
+    const root = document.documentElement;
+    root.dataset.theme = settings.theme;
+    const accent = settings.accent.toLowerCase();
+    root.style.setProperty('--accent', accent);
+    root.style.setProperty('--accent-ink', inkFor(accent));
+    root.style.setProperty('--fs', settings.size + 'px');
+
     reader.setWpm(settings.wpm);
     reader.smart = settings.smart;
-    el.wpm.value = settings.wpm; el.wpmOut.textContent = settings.wpm;
-    el.size.value = settings.size; el.sizeOut.textContent = settings.size;
-    el.theme.value = settings.theme;
+    const idx = wpmIndex(settings.wpm);
+    el.wpm.value = idx;
+    el.wpm.style.setProperty('--f', idx / (WPMS.length - 1));
+    el.wpm.setAttribute('aria-valuetext', WPMS[idx] + ' words per minute');
+    el.wpmOut.textContent = WPMS[idx];
+    el.fWpm.textContent = WPMS[idx] + ' WPM';
+
+    el.size.value = settings.size;
+    el.size.style.setProperty('--f', (settings.size - el.size.min) / (el.size.max - el.size.min));
+    el.sizeOut.textContent = settings.size;
     el.smart.checked = settings.smart;
+
+    themeBtns.forEach((b) => b.setAttribute('aria-checked', b.dataset.theme === settings.theme));
+    let preset = false;
+    swatchBtns.forEach((b) => {
+      const on = b.dataset.color === accent;
+      preset = preset || on;
+      b.setAttribute('aria-checked', on);
+    });
+    customWrap.setAttribute('aria-checked', !preset);
+    customWrap.classList.toggle('on', !preset);
+    customWrap.style.setProperty('--c', accent);
+    customInput.value = accent;
     updateStats();
   }
   function changeSetting(key, value) {
@@ -92,6 +187,56 @@
     store.set(KEYS.settings, settings);
     applySettings();
   }
+  function stepWpm(delta) {
+    const i = Math.max(0, Math.min(WPMS.length - 1, wpmIndex(settings.wpm) + delta));
+    changeSetting('wpm', WPMS[i]);
+  }
+
+  // ---- focus mode ----
+  let focus = false;
+  let uiTimer = null;
+
+  function pokeFocusUi() {
+    el.stage.classList.add('ui');
+    el.stage.classList.remove('idle');
+    clearTimeout(uiTimer);
+    if (reader.playing) {
+      uiTimer = setTimeout(() => {
+        el.stage.classList.remove('ui');
+        el.stage.classList.add('idle');
+      }, 2000);
+    }
+  }
+
+  function setFocus(on) {
+    if (on === focus) return;
+    focus = on;
+    document.body.classList.toggle('focus', on);
+    el.focusBtn.setAttribute('aria-label', on ? 'Exit focus mode' : 'Enter focus mode');
+    el.focusBtn.title = on ? 'Exit focus mode (Esc)' : 'Focus mode (F)';
+    if (on) {
+      // Real fullscreen where supported; the CSS overlay is the fallback (e.g. iPhone Safari).
+      try {
+        const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+        if (p && p.catch) p.catch(() => {});
+      } catch (_) { /* ignore */ }
+      el.stage.focus({ preventScroll: true });
+      pokeFocusUi();
+    } else {
+      clearTimeout(uiTimer);
+      el.stage.classList.remove('ui', 'idle');
+      if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    }
+  }
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && focus) setFocus(false); // user pressed Esc in fullscreen
+  });
+  ['mousemove', 'touchstart'].forEach((ev) => el.stage.addEventListener(ev, () => { if (focus) pokeFocusUi(); }, { passive: true }));
+  // Buttons inside the stage must not also toggle playback.
+  el.focusBtn.addEventListener('click', (e) => { e.stopPropagation(); setFocus(!focus); });
+  document.querySelector('.focus-bar').addEventListener('click', (e) => e.stopPropagation());
+  $('fDown').addEventListener('click', () => stepWpm(-1));
+  $('fUp').addEventListener('click', () => stepWpm(1));
 
   // ---- views ----
   function setStatus(msg, isError) {
@@ -104,13 +249,14 @@
     el.reader.hidden = false;
     el.newBtn.hidden = false;
     el.title.textContent = doc.title;
-    el.note.textContent = 'Paused — tap or press Space';
+    el.note.textContent = '';
     el.scrub.max = Math.max(0, reader.length - 1);
     window.scrollTo(0, 0);
     el.stage.focus({ preventScroll: true });
   }
 
   function showInput() {
+    setFocus(false);
     reader.pause();
     savePosition();
     el.reader.hidden = true;
@@ -137,7 +283,7 @@
     if (reader.length === 0) { setStatus('No readable text was found in that.', true); return false; }
     setStatus('');
     showReader();
-    if (!saved) el.note.textContent = 'Paused — too large to remember between visits';
+    if (!saved) el.note.textContent = 'Too large to remember between visits';
     return true;
   }
 
@@ -151,7 +297,7 @@
     const total = (saved.text.match(/\S+/g) || []).length;
     const pct = total > 1 ? Math.min(100, Math.round((idx / total) * 100)) : 0;
     $('resumeTitle').textContent = saved.title;
-    $('resumeMeta').textContent = pct + '% read · ' + total.toLocaleString() + ' words';
+    $('resumeMeta').textContent = pct + '% · ' + total.toLocaleString() + ' words';
     card.hidden = false;
   }
 
@@ -257,29 +403,32 @@
   $('fwdBtn').addEventListener('click', () => reader.skip(10));
   el.scrub.addEventListener('input', () => { reader.seek(+el.scrub.value); });
   el.scrub.addEventListener('change', savePosition);
-  el.wpm.addEventListener('input', () => changeSetting('wpm', +el.wpm.value));
+  el.wpm.addEventListener('input', () => changeSetting('wpm', WPMS[+el.wpm.value]));
+  $('wpmDown').addEventListener('click', () => stepWpm(-1));
+  $('wpmUp').addEventListener('click', () => stepWpm(1));
   el.size.addEventListener('input', () => changeSetting('size', +el.size.value));
-  el.theme.addEventListener('change', () => changeSetting('theme', el.theme.value));
   el.smart.addEventListener('change', () => changeSetting('smart', el.smart.checked));
 
   document.addEventListener('keydown', (e) => {
     if (el.reader.hidden || e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target;
     const tag = t.tagName;
-    if (tag === 'SELECT' || tag === 'TEXTAREA' || (tag === 'INPUT' && t.type === 'text')) return;
+    if (tag === 'SELECT' || tag === 'TEXTAREA' || (tag === 'INPUT' && (t.type === 'text' || t.type === 'color'))) return;
     // Space/Enter on a focused button should activate that button, not toggle playback.
     if ((e.key === ' ' || e.key === 'Enter') && t !== el.stage && (tag === 'BUTTON' || tag === 'SUMMARY' || (tag === 'INPUT' && t.type === 'checkbox'))) return;
     // Arrow keys on a focused slider adjust that slider natively.
     if (tag === 'INPUT' && t.type === 'range' && e.key.startsWith('Arrow')) return;
+    if (focus) pokeFocusUi();
     const step = e.shiftKey ? 1 : 10;
     switch (e.key) {
       case ' ': reader.toggle(); break;
       case 'ArrowLeft': reader.skip(-step); break;
       case 'ArrowRight': reader.skip(step); break;
-      case 'ArrowUp': changeSetting('wpm', Math.min(1000, settings.wpm + 25)); break;
-      case 'ArrowDown': changeSetting('wpm', Math.max(100, settings.wpm - 25)); break;
+      case 'ArrowUp': stepWpm(1); break;
+      case 'ArrowDown': stepWpm(-1); break;
       case 'Home': reader.seek(0); break;
-      case 'Escape': showInput(); break;
+      case 'f': case 'F': setFocus(!focus); break;
+      case 'Escape': focus ? setFocus(false) : showInput(); break;
       default: return;
     }
     e.preventDefault();
