@@ -71,8 +71,26 @@ a { color: inherit; }
   padding: 16px;
   margin-bottom: 16px;
 }
-.resume { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
-.resume strong { display: block; overflow-wrap: anywhere; }
+.library { padding: 8px 8px 4px; }
+.lib-head { margin: 4px 8px 6px; font-size: 0.8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+#libList { list-style: none; margin: 0; padding: 0; }
+#libList li { display: flex; align-items: stretch; gap: 4px; }
+#libList li + li { border-top: 1px solid var(--border); }
+.lib-open {
+  flex: 1; min-width: 0; display: grid; gap: 2px; text-align: left; cursor: pointer;
+  font: inherit; color: inherit; background: none; border: 0; border-radius: 8px; padding: 10px 8px;
+}
+.lib-open:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.lib-open strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-bar {
+  --f: 0; display: block; height: 3px; margin-top: 6px; border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) calc(var(--f) * 100%), var(--border) 0);
+}
+.lib-del {
+  flex: none; width: 40px; cursor: pointer; font-size: 1.3rem; line-height: 1;
+  color: var(--muted); background: none; border: 0; border-radius: 8px;
+}
+.lib-del:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
 
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .row.end { justify-content: flex-end; margin-top: 12px; }

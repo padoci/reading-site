@@ -6,7 +6,7 @@ A static website that shows text back to you one word at a time (rapid serial vi
 **Reader:** speed slider (100–1000 WPM, fine 10-WPM steps across 250–500), smart pauses on punctuation and long words, play/pause, ±10-word skip, scrub bar, restart, full-screen focus mode, text size, light / dark grey / black themes and a custom accent colour.
 **Keys:** `Space` play/pause · `←`/`→` ±10 words (`Shift` ±1) · `↑`/`↓` speed · `F` focus mode · `Home` restart · `Esc` exit focus / reader.
 
-Text, reading position and settings are stored only in your browser's `localStorage`.
+Every text you open is kept in a library with its own reading position, so you can switch between pieces and pick each one up where you left off. Re-opening the same text resumes it rather than adding a copy. Everything is stored only in your browser's `localStorage`. When storage fills up, the least recently read texts are dropped.
 
 ## Run it
 

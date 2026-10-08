@@ -3,7 +3,13 @@
   'use strict';
 
   const $ = (id) => document.getElementById(id);
-  const KEYS = { doc: 'flashreader.doc', pos: 'flashreader.pos', settings: 'flashreader.settings' };
+  const KEYS = {
+    library: 'flashreader.library', // [{ id, title, total, index, hash, readAt }]
+    text: 'flashreader.text.', // + id → the document's full text
+    settings: 'flashreader.settings',
+    legacyDoc: 'flashreader.doc', // single-document storage from earlier versions
+    legacyPos: 'flashreader.pos',
+  };
 
   // Selectable speeds: fine 10-WPM steps through the common 250-500 range, coarser at the ends.
   const WPMS = [];
@@ -31,7 +37,73 @@
     remove(key) {
       try { localStorage.removeItem(key); } catch (_) { /* ignore */ }
     },
+    getRaw(key) {
+      try { return localStorage.getItem(key); } catch (_) { return null; }
+    },
+    setRaw(key, value) {
+      try { localStorage.setItem(key, value); return true; } catch (_) { return false; }
+    },
   };
+
+  // ---- library: several documents, each with its own reading position ----
+  const library = {
+    list() {
+      const l = store.get(KEYS.library);
+      return Array.isArray(l) ? l : [];
+    },
+    save(list) { return store.set(KEYS.library, list); },
+    get(id) { return library.list().find((e) => e.id === id) || null; },
+    text(id) { return store.getRaw(KEYS.text + id); },
+    update(id, fields) {
+      const list = library.list();
+      const e = list.find((x) => x.id === id);
+      if (!e) return;
+      Object.assign(e, fields);
+      library.save(list);
+    },
+    remove(id) {
+      store.remove(KEYS.text + id);
+      library.save(library.list().filter((e) => e.id !== id));
+    },
+    /** Store a new entry, evicting the least recently read ones if storage is full. */
+    add(entry, text) {
+      let list = library.list();
+      while (!store.setRaw(KEYS.text + entry.id, text)) {
+        if (!list.length) return false;
+        const oldest = list.reduce((a, b) => (a.readAt <= b.readAt ? a : b));
+        store.remove(KEYS.text + oldest.id);
+        list = list.filter((e) => e !== oldest);
+        library.save(list);
+      }
+      list.unshift(entry);
+      if (!library.save(list)) { store.remove(KEYS.text + entry.id); return false; }
+      return true;
+    },
+  };
+
+  function hashText(text) {
+    let h = 0x811c9dc5; // FNV-1a
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16) + ':' + text.length;
+  }
+
+  (function migrateLegacy() {
+    const old = store.get(KEYS.legacyDoc);
+    if (old && old.text) {
+      const pos = store.get(KEYS.legacyPos);
+      library.add({
+        id: String(old.id), title: old.title || 'Untitled',
+        total: (old.text.match(/\S+/g) || []).length,
+        index: pos && pos.id === old.id ? pos.index : 0,
+        hash: hashText(old.text), readAt: Date.now(),
+      }, old.text);
+    }
+    store.remove(KEYS.legacyDoc);
+    store.remove(KEYS.legacyPos);
+  })();
 
   const settings = Object.assign({}, DEFAULTS, store.get(KEYS.settings));
   if (settings.theme === 'dark') settings.theme = 'grey'; // from the earlier two-theme version
@@ -39,7 +111,7 @@
     settings.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'grey' : 'light';
   }
   if (!/^#[0-9a-f]{6}$/i.test(settings.accent)) settings.accent = DEFAULTS.accent;
-  let doc = null; // { id, title, text }
+  let doc = null; // { id, title, saved } — saved is false when the text didn't fit in storage
 
   // ---- elements ----
   const el = {
@@ -93,9 +165,9 @@
   }
 
   function savePosition() {
-    if (!doc) return;
+    if (!doc || !doc.saved) return;
     lastSaved = Date.now();
-    store.set(KEYS.pos, { id: doc.id, index: reader.index });
+    library.update(doc.id, { index: reader.index, readAt: Date.now() });
   }
 
   // ---- speed slider ticks ----
@@ -262,43 +334,87 @@
     el.reader.hidden = true;
     el.input.hidden = false;
     el.newBtn.hidden = true;
-    renderResume();
+    renderLibrary();
   }
 
-  /** Start reading a new document. */
-  function openDoc(title, text, startIndex) {
-    if (!/\S/.test(text)) {
+  /** Start reading a new document (or reopen it if the same text is already in the library). */
+  function openDoc(title, text) {
+    const hash = hashText(text);
+    const existing = library.list().find((e) => e.hash === hash);
+    if (existing && library.text(existing.id) !== null) return openEntry(existing.id);
+
+    reader.load(text, 0);
+    if (!/\S/.test(text) || reader.length === 0) {
       setStatus('No readable text was found in that.', true);
       return false;
     }
-    doc = { id: Date.now(), title: title || 'Untitled', text };
-    const saved = store.set(KEYS.doc, doc);
-    store.set(KEYS.pos, { id: doc.id, index: startIndex || 0 });
-    if (!saved) {
-      // Too large for localStorage: drop the stale copy so "Continue" never opens the wrong text.
-      store.remove(KEYS.doc);
-      store.remove(KEYS.pos);
-    }
-    reader.load(text, startIndex || 0);
-    if (reader.length === 0) { setStatus('No readable text was found in that.', true); return false; }
+    const entry = { id: String(Date.now()), title: title || 'Untitled', total: reader.length, index: 0, hash, readAt: Date.now() };
+    doc = { id: entry.id, title: entry.title, saved: library.add(entry, text) };
     setStatus('');
     showReader();
-    if (!saved) el.note.textContent = 'Too large to remember between visits';
+    if (!doc.saved) el.note.textContent = 'Too large to remember between visits';
     return true;
   }
 
-  function renderResume() {
-    const saved = store.get(KEYS.doc);
-    const pos = store.get(KEYS.pos);
-    const card = $('resumeCard');
-    if (!saved || !saved.text) { card.hidden = true; return; }
-    const idx = pos && pos.id === saved.id ? pos.index : 0;
-    // Rough word count without tokenizing the whole text.
-    const total = (saved.text.match(/\S+/g) || []).length;
-    const pct = total > 1 ? Math.min(100, Math.round((idx / total) * 100)) : 0;
-    $('resumeTitle').textContent = saved.title;
-    $('resumeMeta').textContent = pct + '% · ' + total.toLocaleString() + ' words';
-    card.hidden = false;
+  function openEntry(id) {
+    const entry = library.get(id);
+    const text = entry && library.text(id);
+    if (!entry || text === null) {
+      if (entry) library.remove(id);
+      renderLibrary();
+      setStatus('That text is no longer stored.', true);
+      return false;
+    }
+    doc = { id, title: entry.title, saved: true };
+    reader.load(text, entry.index);
+    library.update(id, { readAt: Date.now(), total: reader.length });
+    setStatus('');
+    showReader();
+    return true;
+  }
+
+  function timeAgo(ms) {
+    const m = Math.round((Date.now() - ms) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min ago';
+    const h = Math.round(m / 60);
+    if (h < 24) return h + 'h ago';
+    const d = Math.round(h / 24);
+    return d === 1 ? 'yesterday' : d + ' days ago';
+  }
+
+  function renderLibrary() {
+    const list = library.list().sort((a, b) => b.readAt - a.readAt);
+    const ul = $('libList');
+    ul.textContent = '';
+    $('library').hidden = !list.length;
+    for (const e of list) {
+      const frac = e.total > 1 ? Math.min(1, e.index / (e.total - 1)) : 0;
+      const li = document.createElement('li');
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'lib-open';
+      const title = document.createElement('strong');
+      title.textContent = e.title;
+      const meta = document.createElement('span');
+      meta.className = 'muted small';
+      meta.textContent = (frac >= 1 ? 'Finished' : Math.round(frac * 100) + '%') + ' · ' +
+        e.total.toLocaleString() + ' words · ' + timeAgo(e.readAt);
+      const bar = document.createElement('span');
+      bar.className = 'lib-bar';
+      bar.style.setProperty('--f', frac);
+      open.append(title, meta, bar);
+      open.addEventListener('click', () => openEntry(e.id));
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'lib-del';
+      del.setAttribute('aria-label', 'Remove ' + e.title);
+      del.title = 'Remove';
+      del.textContent = '\u00d7';
+      del.addEventListener('click', () => { library.remove(e.id); renderLibrary(); });
+      li.append(open, del);
+      ul.appendChild(li);
+    }
   }
 
   // ---- input handling ----
@@ -376,20 +492,7 @@
     run('Fetching page…', () => Extract.fromUrl($('urlInput').value));
   });
 
-  // Resume / discard / new
-  $('resumeBtn').addEventListener('click', () => {
-    const saved = store.get(KEYS.doc);
-    const pos = store.get(KEYS.pos);
-    if (!saved) return renderResume();
-    doc = saved;
-    reader.load(saved.text, pos && pos.id === saved.id ? pos.index : 0);
-    showReader();
-  });
-  $('discardBtn').addEventListener('click', () => {
-    store.remove(KEYS.doc);
-    store.remove(KEYS.pos);
-    renderResume();
-  });
+  // New text
   el.newBtn.addEventListener('click', showInput);
   $('home').addEventListener('click', (e) => {
     if (!el.reader.hidden) { e.preventDefault(); showInput(); }
@@ -439,5 +542,5 @@
 
   // ---- init ----
   applySettings();
-  renderResume();
+  renderLibrary();
 })();
