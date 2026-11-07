@@ -283,3 +283,10 @@ body.focus .focus-progress { display: block; position: absolute; left: 0; right:
   .controls .play { min-width: 0; flex: 1; }
   .btn.step { padding: 0; }
 }
+
+.btn.listen[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.listen-note { text-align: center; min-height: 1.4em; margin: -12px 0 16px; }
+.field select {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text); font: inherit;
+}

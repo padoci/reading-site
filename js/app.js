@@ -24,7 +24,7 @@
 
   const THEMES = ['light', 'grey', 'black'];
   const ACCENTS = ['#e5392f', '#f08c00', '#2f9e44', '#12a4a4', '#2f6fed', '#8250df', '#e83e8c'];
-  const DEFAULTS = { wpm: 300, size: 56, theme: null, accent: ACCENTS[0], smart: true };
+  const DEFAULTS = { wpm: 300, size: 56, theme: null, accent: ACCENTS[0], smart: true, voice: 'af_heart' };
 
   // ---- storage (always guarded: it can be unavailable or full) ----
   const store = {
@@ -133,7 +133,7 @@
       wordParts.r.textContent = w.slice(p + 1);
       el.scrub.value = i;
       updateStats();
-      if (reader.playing && Date.now() - lastSaved > 2000) savePosition();
+      if ((reader.playing || narrator.active) && Date.now() - lastSaved > 2000) savePosition();
     },
     onState(playing) {
       el.play.textContent = playing ? 'Pause' : 'Play';
@@ -147,6 +147,57 @@
       savePosition();
     },
   });
+
+  // ---- listen mode (text-to-speech drives the display) ----
+  const listenBtn = $('listenBtn');
+  const listenNote = $('listenNote');
+  const narrator = new Tts.Narrator({
+    getWords: () => reader.words,
+    getParas: () => reader.paras,
+    onWord: (i) => reader.seek(i),
+    onState(listening, paused) {
+      const on = listening || !!paused;
+      listenBtn.setAttribute('aria-pressed', on);
+      listenBtn.innerHTML = listening ? '&#x23F8; Pause' : paused ? '&#x1F50A; Resume' : '&#x1F50A; Listen';
+      el.note.textContent = '';
+      if (!on) savePosition();
+      if (focus) pokeFocusUi();
+    },
+    onStatus(msg, isError) {
+      listenNote.textContent = msg || '';
+      listenNote.classList.toggle('error', !!isError);
+    },
+    onEnd() {
+      el.note.textContent = 'End of text';
+      savePosition();
+    },
+  });
+  narrator.voice = settings.voice;
+  narrator.wpm = settings.wpm;
+  Tts.VOICES.forEach(([id, label]) => {
+    const o = document.createElement('option');
+    o.value = id;
+    o.textContent = label;
+    $('voice').appendChild(o);
+  });
+  let restartTimer = null;
+  function listenRestartSoon() {
+    clearTimeout(restartTimer);
+    restartTimer = setTimeout(() => narrator.restartAt(reader.index), 400);
+  }
+  function toggleListen() {
+    if (!narrator.active) { reader.pause(); narrator.start(reader.index); }
+    else if (narrator.paused) narrator.resume();
+    else narrator.pause();
+  }
+  /** Space / click: pause or resume whichever mode is running. */
+  function togglePlayback() {
+    if (narrator.active) toggleListen(); else reader.toggle();
+  }
+  function jump(i) {
+    reader.seek(i);
+    if (narrator.active) narrator.seek(reader.index);
+  }
 
   function fmtTime(sec) {
     if (sec < 60) return Math.max(1, Math.round(sec)) + 's left';
@@ -228,6 +279,8 @@
     root.style.setProperty('--fs', settings.size + 'px');
 
     reader.setWpm(settings.wpm);
+    narrator.wpm = settings.wpm;
+    $('voice').value = settings.voice;
     reader.smart = settings.smart;
     const idx = wpmIndex(settings.wpm);
     el.wpm.value = idx;
@@ -258,6 +311,8 @@
     settings[key] = value;
     store.set(KEYS.settings, settings);
     applySettings();
+    if (key === 'wpm') listenRestartSoon();
+    if (key === 'voice') { narrator.voice = value; listenRestartSoon(); }
   }
   function stepWpm(delta) {
     const i = Math.max(0, Math.min(WPMS.length - 1, wpmIndex(settings.wpm) + delta));
@@ -317,6 +372,8 @@
   }
 
   function showReader() {
+    narrator.stop();
+    listenNote.textContent = '';
     el.input.hidden = true;
     el.reader.hidden = false;
     el.newBtn.hidden = false;
@@ -329,6 +386,7 @@
 
   function showInput() {
     setFocus(false);
+    narrator.stop();
     reader.pause();
     savePosition();
     el.reader.hidden = true;
@@ -339,6 +397,7 @@
 
   /** Start reading a new document (or reopen it if the same text is already in the library). */
   function openDoc(title, text) {
+    narrator.stop();
     const hash = hashText(text);
     const existing = library.list().find((e) => e.hash === hash);
     if (existing && library.text(existing.id) !== null) return openEntry(existing.id);
@@ -499,12 +558,14 @@
   });
 
   // ---- reader controls ----
-  el.play.addEventListener('click', () => reader.toggle());
-  el.stage.addEventListener('click', () => reader.toggle());
-  $('restartBtn').addEventListener('click', () => reader.seek(0));
-  $('backBtn').addEventListener('click', () => reader.skip(-10));
-  $('fwdBtn').addEventListener('click', () => reader.skip(10));
-  el.scrub.addEventListener('input', () => { reader.seek(+el.scrub.value); });
+  el.play.addEventListener('click', () => { if (narrator.active) narrator.stop(); reader.toggle(); });
+  listenBtn.addEventListener('click', toggleListen);
+  $('voice').addEventListener('change', () => changeSetting('voice', $('voice').value));
+  el.stage.addEventListener('click', togglePlayback);
+  $('restartBtn').addEventListener('click', () => jump(0));
+  $('backBtn').addEventListener('click', () => jump(reader.index - 10));
+  $('fwdBtn').addEventListener('click', () => jump(reader.index + 10));
+  el.scrub.addEventListener('input', () => { jump(+el.scrub.value); });
   el.scrub.addEventListener('change', savePosition);
   el.wpm.addEventListener('input', () => changeSetting('wpm', WPMS[+el.wpm.value]));
   $('wpmDown').addEventListener('click', () => stepWpm(-1));
@@ -524,12 +585,13 @@
     if (focus) pokeFocusUi();
     const step = e.shiftKey ? 1 : 10;
     switch (e.key) {
-      case ' ': reader.toggle(); break;
-      case 'ArrowLeft': reader.skip(-step); break;
-      case 'ArrowRight': reader.skip(step); break;
+      case ' ': togglePlayback(); break;
+      case 'ArrowLeft': jump(reader.index - step); break;
+      case 'ArrowRight': jump(reader.index + step); break;
       case 'ArrowUp': stepWpm(1); break;
       case 'ArrowDown': stepWpm(-1); break;
-      case 'Home': reader.seek(0); break;
+      case 'Home': jump(0); break;
+      case 'l': case 'L': toggleListen(); break;
       case 'f': case 'F': setFocus(!focus); break;
       case 'Escape': focus ? setFocus(false) : showInput(); break;
       default: return;

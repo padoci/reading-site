@@ -104,7 +104,9 @@
         <button type="button" class="btn icon" id="backBtn" title="Back 10 words (←)" aria-label="Back 10 words">&#x21BA; 10</button>
         <button type="button" class="btn primary play" id="playBtn" title="Play / pause (Space)" aria-label="Play">Play</button>
         <button type="button" class="btn icon" id="fwdBtn" title="Forward 10 words (→)" aria-label="Forward 10 words">10 &#x21BB;</button>
+        <button type="button" class="btn listen" id="listenBtn" title="Read aloud (L)" aria-pressed="false">&#x1F50A; Listen</button>
       </div>
+      <p id="listenNote" class="muted small listen-note" role="status" aria-live="polite"></p>
 
       <div class="speed">
         <div class="speed-head">
@@ -135,6 +137,10 @@
             <span>Text size <output id="sizeOut">56</output> px</span>
             <input type="range" class="rng" id="size" min="28" max="120" step="2" value="56">
           </label>
+          <label class="field">
+            <span>Listen voice</span>
+            <select id="voice"></select>
+          </label>
           <label class="check">
             <input type="checkbox" id="smart" checked>
             <span>Smart pauses</span>
@@ -148,6 +154,7 @@
   <script src="vendor/pdf.min.js"></script>
   <script src="js/extract.js"></script>
   <script src="js/reader.js"></script>
+  <script src="js/tts.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
